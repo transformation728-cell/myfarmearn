@@ -24,9 +24,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ==================== CONFIGURATION ====================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8936319194:AAEAgQIWq48NfTRnkN-4EmXlDGv1HtIjZhw")
 ADMIN_IDS = [int(id.strip()) for id in os.getenv("ADMIN_IDS", "7602822493").split(",")]
-MINI_APP_URL = os.getenv("MINI_APP_URL", "https://your-mini-app-domain.com/")
+MINI_APP_URL = os.getenv("MINI_APP_URL", "https://digital-buy.taskupjob.top/")
 
 # 3 Required Channels
 REQUIRED_CHANNELS = [
