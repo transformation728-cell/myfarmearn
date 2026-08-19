@@ -25,9 +25,9 @@ load_dotenv()
 
 # ==================== CONFIGURATION ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8777964457:AAH8LbGPU-3EdekLUJbCy44j15c7MXbGr6k")
-REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "@your_channel_username")
+REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "@masutech")
 ADMIN_IDS = [int(id.strip()) for id in os.getenv("ADMIN_IDS", "7602822493").split(",")]
-MINI_APP_URL = os.getenv("MINI_APP_URL", "https://your-mini-app-domain.com/")
+MINI_APP_URL = os.getenv("MINI_APP_URL", "https://digital-buy.taskupjob.top/")
 
 # ==================== DATABASE ====================
 DB_PATH = "bot.db"
