@@ -4,7 +4,7 @@ import sqlite3
 import os
 import json
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 from aiogram import Bot, Dispatcher, Router, types, F
 from aiogram.enums import ParseMode
@@ -24,10 +24,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ==================== CONFIGURATION ====================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8777964457:AAH8LbGPU-3EdekLUJbCy44j15c7MXbGr6k")
-REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "@masutech")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
 ADMIN_IDS = [int(id.strip()) for id in os.getenv("ADMIN_IDS", "7602822493").split(",")]
-MINI_APP_URL = os.getenv("MINI_APP_URL", "https://digital-buy.taskupjob.top/")
+MINI_APP_URL = os.getenv("MINI_APP_URL", "https://your-mini-app-domain.com/")
+
+# 3 Required Channels
+REQUIRED_CHANNELS = [
+    {"username": os.getenv("CHANNEL_1", "@channel1"), "name": "চ্যানেল ১"},
+    {"username": os.getenv("CHANNEL_2", "@channel2"), "name": "চ্যানেল ২"},
+    {"username": os.getenv("CHANNEL_3", "@channel3"), "name": "চ্যানেল ৩"},
+]
 
 # ==================== DATABASE ====================
 DB_PATH = "bot.db"
@@ -59,6 +65,16 @@ def init_db():
             total_sent INTEGER,
             failed INTEGER,
             sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # User channel join status
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_channels (
+            user_id INTEGER,
+            channel_username TEXT,
+            joined BOOLEAN DEFAULT 0,
+            PRIMARY KEY (user_id, channel_username)
         )
     ''')
     
@@ -112,9 +128,38 @@ def save_broadcast(admin_id: int, message: str, total_sent: int, failed: int):
     conn.commit()
     conn.close()
 
+def update_channel_join(user_id: int, channel_username: str, joined: bool):
+    """Update user channel join status"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT OR REPLACE INTO user_channels (user_id, channel_username, joined)
+        VALUES (?, ?, ?)
+    ''', (user_id, channel_username, joined))
+    conn.commit()
+    conn.close()
+
+def get_user_channel_status(user_id: int):
+    """Get all channel join status for a user"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('SELECT channel_username, joined FROM user_channels WHERE user_id = ?', (user_id,))
+    status = cursor.fetchall()
+    conn.close()
+    return {channel: joined for channel, joined in status}
+
+def get_user_joined_channels_count(user_id: int):
+    """Get count of joined channels for a user"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*) FROM user_channels WHERE user_id = ? AND joined = 1', (user_id,))
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
+
 # ==================== MIDDLEWARE ====================
 class ForceJoinMiddleware:
-    """Middleware to check if user is member of required channel"""
+    """Middleware to check if user is member of all required channels"""
     
     def __init__(self, bot: Bot):
         self.bot = bot
@@ -132,44 +177,63 @@ class ForceJoinMiddleware:
             if user_id in ADMIN_IDS and isinstance(event, Message) and event.text and event.text.startswith('/'):
                 return await handler(event, data)
             
-            try:
-                member = await self.bot.get_chat_member(
-                    chat_id=REQUIRED_CHANNEL,
-                    user_id=user_id
-                )
-                
-                if member.status in ["left", "kicked"]:
-                    keyboard = InlineKeyboardMarkup(
-                        inline_keyboard=[
-                            [InlineKeyboardButton(
-                                text="🔵 চ্যানেল জয়েন করুন",
-                                url=f"https://t.me/{REQUIRED_CHANNEL.lstrip('@')}"
-                            )],
-                            [InlineKeyboardButton(
-                                text="✅ জয়েন করে চেক করুন",
-                                callback_data="check_join"
-                            )]
-                        ]
+            # Check all channels
+            all_joined = True
+            not_joined_channels = []
+            
+            for channel in REQUIRED_CHANNELS:
+                try:
+                    member = await self.bot.get_chat_member(
+                        chat_id=channel["username"],
+                        user_id=user_id
                     )
                     
-                    if isinstance(event, Message):
-                        await event.answer(
-                            "⚠️ বট ব্যবহার করতে প্রথমে আমাদের চ্যানেল জয়েন করুন!\n\n"
-                            "নিচের বাটনে ক্লিক করে চ্যানেল জয়েন করুন এবং তারপর 'চেক করুন' বাটনে ক্লিক করুন।",
-                            reply_markup=keyboard
+                    if member.status in ["left", "kicked"]:
+                        all_joined = False
+                        not_joined_channels.append(channel)
+                        update_channel_join(user_id, channel["username"], False)
+                    else:
+                        update_channel_join(user_id, channel["username"], True)
+                        
+                except TelegramAPIError as e:
+                    logging.error(f"Force join check error for {channel['username']}: {e}")
+                    all_joined = False
+                    not_joined_channels.append(channel)
+            
+            if not all_joined:
+                # Create inline keyboard with all channels
+                keyboard_buttons = []
+                for channel in not_joined_channels:
+                    keyboard_buttons.append([
+                        InlineKeyboardButton(
+                            text=f"🔵 {channel['name']} জয়েন করুন",
+                            url=f"https://t.me/{channel['username'].lstrip('@')}"
                         )
-                    elif isinstance(event, CallbackQuery):
-                        await event.message.edit_text(
-                            "⚠️ বট ব্যবহার করতে প্রথমে আমাদের চ্যানেল জয়েন করুন!\n\n"
-                            "নিচের বাটনে ক্লিক করে চ্যানেল জয়েন করুন এবং তারপর 'চেক করুন' বাটনে ক্লিক করুন।",
-                            reply_markup=keyboard
-                        )
-                    return  # Stop processing
-                    
-            except TelegramAPIError as e:
-                logging.error(f"Force join check error: {e}")
-                # If bot is not admin or channel not found, allow access
-                pass
+                    ])
+                
+                keyboard_buttons.append([
+                    InlineKeyboardButton(
+                        text="✅ জয়েন করে চেক করুন",
+                        callback_data="check_join"
+                    )
+                ])
+                
+                keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+                
+                joined_count = get_user_joined_channels_count(user_id)
+                total_channels = len(REQUIRED_CHANNELS)
+                
+                message_text = (
+                    f"⚠️ বট ব্যবহার করতে প্রথমে সবগুলো চ্যানেল জয়েন করুন!\n\n"
+                    f"জয়েন করা চ্যানেল: {joined_count}/{total_channels}\n\n"
+                    f"নিচের বাটনে ক্লিক করে চ্যানেলগুলো জয়েন করুন এবং তারপর 'চেক করুন' বাটনে ক্লিক করুন।"
+                )
+                
+                if isinstance(event, Message):
+                    await event.answer(message_text, reply_markup=keyboard)
+                elif isinstance(event, CallbackQuery):
+                    await event.message.edit_text(message_text, reply_markup=keyboard)
+                return  # Stop processing
         
         return await handler(event, data)
 
@@ -194,7 +258,54 @@ async def start_command(message: Message):
         last_name=message.from_user.last_name
     )
     
-    # Main menu keyboard with Mini App button
+    # Check if user has joined all channels
+    all_joined = True
+    for channel in REQUIRED_CHANNELS:
+        try:
+            member = await message.bot.get_chat_member(
+                chat_id=channel["username"],
+                user_id=message.from_user.id
+            )
+            if member.status in ["left", "kicked"]:
+                all_joined = False
+                update_channel_join(message.from_user.id, channel["username"], False)
+            else:
+                update_channel_join(message.from_user.id, channel["username"], True)
+        except:
+            all_joined = False
+    
+    if not all_joined:
+        # Show channel join prompt
+        keyboard_buttons = []
+        for channel in REQUIRED_CHANNELS:
+            keyboard_buttons.append([
+                InlineKeyboardButton(
+                    text=f"🔵 {channel['name']} জয়েন করুন",
+                    url=f"https://t.me/{channel['username'].lstrip('@')}"
+                )
+            ])
+        
+        keyboard_buttons.append([
+            InlineKeyboardButton(
+                text="✅ জয়েন করে চেক করুন",
+                callback_data="check_join"
+            )
+        ])
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+        
+        await message.answer(
+            "⚠️ বট ব্যবহার করতে প্রথমে সবগুলো চ্যানেল জয়েন করুন!\n\n"
+            "নিচের বাটনে ক্লিক করে চ্যানেলগুলো জয়েন করুন এবং তারপর 'চেক করুন' বাটনে ক্লিক করুন।",
+            reply_markup=keyboard
+        )
+        return
+    
+    # Show main menu with mini app button
+    await show_main_menu(message)
+
+async def show_main_menu(message: Message):
+    """Show main menu with mini app button"""
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(
@@ -211,7 +322,7 @@ async def start_command(message: Message):
         f"👋 স্বাগতম {message.from_user.first_name}!\n\n"
         f"আমি একটি Telegram Mini App বট।\n"
         f"নিচের 'অ্যাপ খুলুন' বাটনে ক্লিক করে অ্যাপটি ব্যবহার করুন।\n\n"
-        f"📌 চ্যানেল জয়েন করতে ভুলবেন না!"
+        f"✅ আপনি সব চ্যানেল জয়েন করেছেন!"
     )
     
     await message.answer(welcome_text, reply_markup=keyboard)
@@ -220,40 +331,81 @@ async def start_command(message: Message):
 @router.callback_query(lambda c: c.data == "check_join")
 async def check_join_callback(callback: CallbackQuery):
     """Handle check join callback"""
-    try:
-        member = await callback.bot.get_chat_member(
-            chat_id=REQUIRED_CHANNEL,
-            user_id=callback.from_user.id
-        )
-        
-        if member.status not in ["left", "kicked"]:
-            # User is member - show main menu
-            keyboard = ReplyKeyboardMarkup(
-                keyboard=[
-                    [KeyboardButton(
-                        text="🚀 অ্যাপ খুলুন",
-                        web_app=WebAppInfo(url=MINI_APP_URL)
-                    )],
-                    [KeyboardButton(text="ℹ️ সাহায্য")]
-                ],
-                resize_keyboard=True
+    user_id = callback.from_user.id
+    
+    # Check all channels
+    all_joined = True
+    not_joined_channels = []
+    
+    for channel in REQUIRED_CHANNELS:
+        try:
+            member = await callback.bot.get_chat_member(
+                chat_id=channel["username"],
+                user_id=user_id
             )
             
-            await callback.message.delete()
-            await callback.message.answer(
-                "✅ ধন্যবাদ! এখন আপনি বট ব্যবহার করতে পারেন।\n"
-                "নিচের বাটনে ক্লিক করে অ্যাপ খুলুন।",
-                reply_markup=keyboard
+            if member.status in ["left", "kicked"]:
+                all_joined = False
+                not_joined_channels.append(channel)
+                update_channel_join(user_id, channel["username"], False)
+            else:
+                update_channel_join(user_id, channel["username"], True)
+                
+        except TelegramAPIError as e:
+            logging.error(f"Check join error for {channel['username']}: {e}")
+            all_joined = False
+            not_joined_channels.append(channel)
+    
+    if all_joined:
+        # All channels joined - show main menu
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(
+                    text="🚀 অ্যাপ খুলুন",
+                    web_app=WebAppInfo(url=MINI_APP_URL)
+                )],
+                [KeyboardButton(text="ℹ️ সাহায্য")]
+            ],
+            resize_keyboard=True
+        )
+        
+        await callback.message.delete()
+        await callback.message.answer(
+            "✅ ধন্যবাদ! এখন আপনি বট ব্যবহার করতে পারেন।\n"
+            "নিচের বাটনে ক্লিক করে অ্যাপ খুলুন।",
+            reply_markup=keyboard
+        )
+        await callback.answer()
+    else:
+        # Some channels not joined - show updated list
+        keyboard_buttons = []
+        for channel in not_joined_channels:
+            keyboard_buttons.append([
+                InlineKeyboardButton(
+                    text=f"🔵 {channel['name']} জয়েন করুন",
+                    url=f"https://t.me/{channel['username'].lstrip('@')}"
+                )
+            ])
+        
+        keyboard_buttons.append([
+            InlineKeyboardButton(
+                text="✅ জয়েন করে চেক করুন",
+                callback_data="check_join"
             )
-        else:
-            await callback.answer(
-                "❌ আপনি এখনও চ্যানেল জয়েন করেননি!\n"
-                "দয়া করে চ্যানেল জয়েন করে আবার চেষ্টা করুন।",
-                show_alert=True
-            )
-    except TelegramAPIError as e:
-        logging.error(f"Check join error: {e}")
-        await callback.answer("ত্রুটি হয়েছে! দয়া করে আবার চেষ্টা করুন।", show_alert=True)
+        ])
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+        
+        joined_count = get_user_joined_channels_count(user_id)
+        total_channels = len(REQUIRED_CHANNELS)
+        
+        await callback.message.edit_text(
+            f"⚠️ এখনও {total_channels - joined_count} টি চ্যানেল জয়েন করেননি!\n\n"
+            f"জয়েন করা চ্যানেল: {joined_count}/{total_channels}\n\n"
+            f"নিচের বাটনে ক্লিক করে বাকি চ্যানেলগুলো জয়েন করুন এবং তারপর 'চেক করুন' বাটনে ক্লিক করুন।",
+            reply_markup=keyboard
+        )
+        await callback.answer()
 
 # --- HELP COMMAND ---
 @router.message(F.text == "ℹ️ সাহায্য")
@@ -263,7 +415,7 @@ async def help_command(message: Message):
     help_text = (
         "🤖 *বট সাহায্য*\n\n"
         "📌 *মুল ফিচার:*\n"
-        "• চ্যানেল জয়েন বাধ্যতামূলক\n"
+        "• ৩টি চ্যানেল জয়েন বাধ্যতামূলক\n"
         "• Telegram Mini App সাপোর্ট\n"
         "• অ্যাডমিন প্যানেল\n\n"
         
@@ -275,7 +427,7 @@ async def help_command(message: Message):
         "`/admin` - অ্যাডমিন প্যানেল খুলুন\n\n"
         
         "💡 *টিপস:*\n"
-        "• চ্যানেল জয়েন না করে বট ব্যবহার করা যাবে না\n"
+        "• সব চ্যানেল জয়েন না করে বট ব্যবহার করা যাবে না\n"
         "• অ্যাপ খুলতে নিচের বাটন ব্যবহার করুন"
     )
     await message.answer(help_text, parse_mode=ParseMode.MARKDOWN)
