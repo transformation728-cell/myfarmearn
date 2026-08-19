@@ -18,13 +18,16 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
+from dotenv import load_dotenv
+
+# ==================== LOAD ENVIRONMENT VARIABLES ====================
+load_dotenv()
 
 # ==================== CONFIGURATION ====================
-# আপনার তথ্য দিন
-BOT_TOKEN = "8777964457:AAH8LbGPU-3EdekLUJbCy44j15c7MXbGr6k"  # আপনার টোকেন
-REQUIRED_CHANNEL = "@your_channel_username"  # আপনার চ্যানেলের ইউজারনেম (যেমন: @my_channel)
-ADMIN_IDS = [7602822493]  # আপনার আইডি
-MINI_APP_URL = "https://your-mini-app-domain.com/"  # আপনার মিনি অ্যাপের URL
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8777964457:AAH8LbGPU-3EdekLUJbCy44j15c7MXbGr6k")
+REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "@your_channel_username")
+ADMIN_IDS = [int(id.strip()) for id in os.getenv("ADMIN_IDS", "7602822493").split(",")]
+MINI_APP_URL = os.getenv("MINI_APP_URL", "https://your-mini-app-domain.com/")
 
 # ==================== DATABASE ====================
 DB_PATH = "bot.db"
